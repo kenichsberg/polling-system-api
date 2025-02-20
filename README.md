@@ -1,8 +1,57 @@
+# Polling System API
 
+## Instruction
+
+### How to run
+```sh
+clj -M -m polling-system-api.core [port]                           ─╯
+```
+To use a fixed port, please provide it as a parameter
+
+### APIs
+Create poll
+```http
+POST /api/poll
+{
+  "poll-id": "your-poll-id",
+  "question": "your-question",
+  "options": [
+     "your options in an array",
+     "another option"
+   ]
+}
+```
+It also returns the generated option-ids, which are supposed to be used for vote.
+
+Once you have poll-id, you can monitor the poll change
+Get poll result
+```http
+GET /api/poll/your-poll-id
+```
+
+Edit poll
+```http
+PUT /api/poll/your-poll-id
+{
+  "question": "your-question",
+  "options": [
+     "your options in an array",
+     "another option"
+   ]
+}
+```
+Delete poll
+```http
+DELETE /api/poll/your-poll-id
+```
+Vote
+```http
+POST /api/option-id
+```
 
 
 ```sql
-/* technical columns except for id (created_at, updated_at)
+/* technical columns except for id (created_at, updated_at, etc)
    were omitted. */
 
 CREATE TABLE users (
