@@ -23,7 +23,7 @@
   (b/uber {:class-dir class-dir
            :uber-file uber-file
            :basis     basis
-           :main      "polling-system-api.core"})
+           :main      'polling-system-api.core})
 
   :done)
 

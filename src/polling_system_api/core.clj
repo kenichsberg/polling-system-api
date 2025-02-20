@@ -1,4 +1,5 @@
 (ns polling-system-api.core
+  (:gen-class)
   (:require [polling-system-api.api.routes :refer [router]]
             [reitit.ring :as ring]
             [ring.adapter.jetty :as jetty])
@@ -31,8 +32,11 @@
 
 
 (defn -main
-  [& [port]]
-  (start (and port (Integer/parseInt port))))
+  ([]
+   (start nil))
+
+  ([port]
+   (start (Integer/parseInt port))))
 
 
 (comment
