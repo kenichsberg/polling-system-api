@@ -95,9 +95,12 @@ However, it is more controllable (poll interval) than *write* (votes) traffic.
 - Why `ConcurrentLinkedQueue` instead of `atom`?
 
 `atom(#{})` (or `(atom [])`) could fit the vote count mutable object for this schema. <br/>
-I'm not sure about actual benchmarks for this, but theoretically, `ConcurrentLinkedQueue` can outperform in concurrent high-traffic situations because its algorithm aims to reduce the amount of `compareAndSet` calls.
-Please understand this experiment as a fun part of my submission :)</br></br>
-Additionally, by storing here `user-id`s, we can prevent users from voting for the same option multiple times.
+I'm not sure about actual benchmarks for this, but theoretically, `ConcurrentLinkedQueue` can outperform in concurrent high-traffic situations because its algorithm aims to reduce the amount of `compareAndSet` calls.<br/>
+You can understand this experiment as a fun part of my submission :)</br></br>
+Additionally, by storing here `user-id`s, we can prevent users from voting for the same option multiple times.<br/>
+Compared to storing count and incrementing it, the trade-off is *read / write* performance.<br/>
+(`ConcurrentLinkedQueue.add()` should give higher throughput than `(swap! cnt inc)` with concurrent calls, but `ConcurrentLinkedQueue.size()` should not)
+
 
 <br/>
 
