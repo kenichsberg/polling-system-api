@@ -25,32 +25,32 @@ POST /api/poll
    ]
 }
 ```
-It also returns the generated option-ids, which are supposed to be used for vote.
+It also returns the generated option-ids, which are supposed to be used for voting.
 
 Once you have poll-id, you can monitor the poll change
 Get poll result
 ```http
-GET /api/poll/your-poll-id
+GET /api/poll/{your-poll-id}
 ```
 
 Edit poll
 ```http
-PUT /api/poll/your-poll-id
+PUT /api/poll/{your-poll-id}
 {
   "question": "your-question",
   "options": [
-     "your options in an array",
+     "your option in an array",
      "another option"
    ]
 }
 ```
 Delete poll
 ```http
-DELETE /api/poll/your-poll-id
+DELETE /api/poll/{your-poll-id}
 ```
 Vote
 ```http
-POST /api/option-id
+POST /api/option/{your-option-id}
 ```
 <br/>
 <br/>
@@ -71,36 +71,34 @@ In memory db stores data as follows:
           "123user2" {:name "user2"}}
 
  :polls
- {<poll-id> {:user-id <user_id>
-             :question <question>
-             :options 
-             {<option-id> {:vote-count <int>
-                           :option <option>
-                           :rank <int>}
-              ...}}
-  ...}
+ (atom {<poll-id> {:user-id <user-id>
+                   :question <question>
+                   :options 
+                   {<option-id> {:vote-count <int>
+                                 :option <option>
+                                 :rank <int>}
+                    ...}}
+         ...})
 
  :votes
- {<option-id> ^ConcurrentLinkedQueue [<user-id> ...]}
-  ...}
+ (atom {<option-id> ^ConcurrentLinkedQueue [<user-id> ...]}
+        ...})
 
 ```
 - Why polls and votes are in the separated atoms?
 
-Alternatively, I could have them in one `atom`, but in that case, concurrent mutations (`swap!` calls) of create [edit, delete] polls would affect the voting performance.<br/>
-When they are separate, they don't affect each other. Because of the nature of the polling API, there can be many concurrent accesses for voting, so here is my consideration.<br>
+By separating them, the vote(option) endpoint only requires `option-id`, but no need for `poll-id`.<br/>
 As a trade-off, this structure makes *read* performance worse, because more computations are needed to collect values.<br/>
-However, it is more controllable (poll interval) than *write* (votes) traffic.
 
 - Why `ConcurrentLinkedQueue` instead of `atom`?
 
 `atom(#{})` (or `(atom [])`) could fit the vote count mutable object for this schema. <br/>
 I'm not sure about actual benchmarks for this, but theoretically, `ConcurrentLinkedQueue` can outperform in concurrent high-traffic situations because its algorithm aims to reduce the amount of `compareAndSet` calls.<br/>
-You can understand this experiment as a fun part of my submission :)</br></br>
-Additionally, by storing here `user-id`s, we can prevent users from voting for the same option multiple times.<br/>
-Compared to storing count and incrementing it, the trade-off is *read / write* performance.<br/>
-(`ConcurrentLinkedQueue.add()` should give higher throughput than `(swap! cnt inc)` with concurrent calls, but `ConcurrentLinkedQueue.size()` should not)
-
+You can understand this experimental decision as a fun part of my submission :)</br></br>
+Additionally, by storing here `user-id`s, we can prevent users from voting for the same option multiple times for free.<br/>
+Compared to storing a count number and incrementing it, the trade-off is *read / write* performance.<br/>
+(`ConcurrentLinkedQueue.add()` should give higher throughput than `(swap! cnt inc)` with concurrent calls, but `ConcurrentLinkedQueue.size()` should not)<br/>
+In my consideration, concurrent writes for voting can be a bottleneck for the polling systems, when we have many users, more likely than reads for poll change. 
 
 <br/>
 
@@ -109,10 +107,42 @@ Compared to storing count and incrementing it, the trade-off is *read / write* p
 - Single-selection polls
 
 For real-world use cases, there should be such a type of poll as **single-selection poll** for which a user can vote for only one option. <br/>
-Due to the time limit, I couldn't add this feature, and this version *only* supports **multi-selection polls**
+Due to the time limit, I couldn't add this feature, and this version *only* supports **multi-selection polls**<br/>
+
+I could implement that with the following structure:
+```clojure
+;;
+;; !!! This is NOT implemented !!!
+;;
+
+{:users  {} // omitted
+
+ :polls
+ (atom {<poll-id> {:user-id <user-id>
+                   :type <single-selection, or multiple-selection>      // added
+                   :voted-users (atom #{<user-id> ...})                 // added
+                   :question <question>
+                   :options 
+                   {<option-id> {:vote-count <int>
+                                 :option <option>
+                                 :rank <int>}
+                    ...}}
+         ...})
+
+ :votes
+ (atom {<option-id> {:poll-id <poll-id>                                 // added
+                     :counter ^ConcurrentLinkedQueue [<user-id> ...]}}  // modified
+        ...})
+
+```
+A (poll-)type should be added to determine whether voting should be restricted to one option.<br/>
+The voted-users field is to support it, too.<br/>
+The poll-id field can be added to the votes map for faster lookup of the target poll map.<br/>
 <br/>
 <br/>
 <br/>
+
+## Database schema
 
 ```sql
 /* technical columns except for id (created_at, updated_at, etc)
@@ -120,39 +150,75 @@ Due to the time limit, I couldn't add this feature, and this version *only* supp
 
 CREATE TABLE users (
   id UUID PRIMARY KEY,
-  api_key TEXT,
-  name TEXT,
-  is_admin Boolean,
+  api_key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  is_admin Boolean NOT NULL,
   UNIQUE (api_key),
   UNIQUE (name)
 )
 
+CREATE TYPE poll_type AS ENUM('single-selection', 'multiple-selection')
+
 CREATE TABLE polls (
   id UUID PRIMARY KEY,
-  user_id UUID, // fk
-  question TEXT,
+  user_id UUID NOT NULL REFERENCES users
+  question TEXT NOT NULL,
+  type poll_type NOT NULL
 )
 
 CREATE TABLE options (
   id UUID PRIMARY KEY,
-  poll_id UUID, // fk
-  option TEXT,
-  rank INT,
+  poll_id UUID NOT NULL REFERENCES polls,
+  option TEXT NOT NULL,
+  rank INT NOT NULL,
   UNIQUE (poll_id, option)
 )
 
+/*
 CREATE TABLE votes (
   id UUID PRIMARY KEY,
-  option_id UUID, // fk
-  user_id UUID,   // fk
+  option_id UUID NOT NULL REFERENCES options,
+  user_id UUID NOT NULL REFERENCES users,
   UNIQUE (option_id, user_id)
+)
+ */
+
+CREATE TABLE votes (
+  id UUID PRIMARY KEY,
+  unique_key UUID NOT NULL,
+  option_id UUID NOT NULL REFERENCES options,
+  user_id UUID NOT NULL REFERENCES users,
+  UNIQUE (unique_key, user_id)
 )
 
 
+
+```
+<br/><br/>
+
+### Consideration
+These schemas allow to vote with no locks.<br/>
+The values in the unique_key field of the votes table should be either poll_id (for single-selection poll) or option_id (for multiple-selection poll).<br/>
+The unique constraint to (unique_key, user_id) prevents the violation of business rules.
+The INSERT query will be as follows:
+```sql
+INSERT INTO votes (unique_key, opiton_id, user_id)
+SELECT
+  CASE WHEN o.type = 'single_selection' THEN p.id ELSE o.id END
+  ,'option_id'
+  ,'user_id'
+FROM options o
+JOIN polls p
+ON o.poll_id = p.id
+WHERE o.id = ?
+```
+The SELECT query for poll change is as follows:
+```sql
 SELECT 
-  p.question,
-  p.option,
-  count(v.id)
+  p.question
+ ,o.option
+ ,o.rank
+ ,count(v.id)
 FROM polls p
 JOIN options o
 ON p.id = o.poll_id
@@ -160,3 +226,5 @@ JOIN votes v
 ON o.id = v.option_id
 WHERE p.id = ?
 ```
+
+If options and votes table have >1M rows, we can have btree index on options.poll_id and votes.option_id.
