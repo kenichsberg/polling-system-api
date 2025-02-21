@@ -197,7 +197,7 @@ CREATE TABLE votes (
 <br/><br/>
 
 ### Consideration
-These schemas allow to vote with no locks.<br/>
+These schemas allow to vote with no locks (no conditional inserts).<br/>
 The values in the unique_key field of the votes table should be either poll_id (for single-selection poll) or option_id (for multiple-selection poll).<br/>
 The unique constraint to (unique_key, user_id) prevents the violation of business rules.
 The INSERT query will be as follows:
@@ -205,8 +205,8 @@ The INSERT query will be as follows:
 INSERT INTO votes (unique_key, opiton_id, user_id)
 SELECT
   CASE WHEN o.type = 'single_selection' THEN p.id ELSE o.id END
-  ,'option_id'
-  ,'user_id'
+  ,? --'option_id'
+  ,? --'user_id'
 FROM options o
 JOIN polls p
 ON o.poll_id = p.id
@@ -227,4 +227,6 @@ ON o.id = v.option_id
 WHERE p.id = ?
 ```
 
-If options and votes table have >1M rows, we can have btree index on options.poll_id and votes.option_id.
+If options and votes tables have >1M rows, we can have btree index on options.poll_id and votes.option_id.<br/>
+If they have more data, we can partition them by uuid_v7 (accordingly shard by it). <br/>
+In case we can delete old data also, it conveniently allows us to DROP TABLE (or DATABASE)
