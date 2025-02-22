@@ -91,12 +91,12 @@ In memory db stores data as follows:
 - Why polls and votes are in the separated atoms?
 
 By separating them, the vote(option) endpoint only requires `option-id`, but no need for `poll-id`.<br/>
-As a trade-off, this structure makes *read* performance worse, because more computations are needed to collect values, but it shouldn't be significant.<br/>
+As a trade-off, this structure makes *read* performance slightly worse, because more computations are needed to collect values, but it shouldn't be significant.<br/>
 
 - Why `ConcurrentLinkedQueue` instead of `atom`?
 
 `atom(#{})` could also be used for the vote count in this schema. <br/>
-Theoretically, `ConcurrentLinkedQueue` might outperform in concurrent high-traffic situations because its algorithm aims to reduce the amount of `compareAndSet` calls.<br/><br/>
+Theoretically, `ConcurrentLinkedQueue` might outperform in concurrent high-traffic situations because its algorithm aims to reduce the amount of `compareAndSet` calls.<br/>
 To support the feature *1 vote per 1 user for the same option* - storing users who voted is mandatory.<br/>
 </br>
 
