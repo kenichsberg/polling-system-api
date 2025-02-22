@@ -1,4 +1,4 @@
-## Instruction
+## Instructions
 
 ### How to run
 To run just locally
@@ -13,7 +13,10 @@ java -jar ./target/polling_system_api.jar [port]
 The port number can be passed as an optional argument to fix it.
 
 ### APIs
-Create poll
+All the following endpoints assume you have a proper `Authorization` header value.<br/><br/>
+Also, request body format should be `JSON` (not `edn`).<br/>
+
+**Create poll**
 ```http
 POST /api/poll
 {
@@ -25,15 +28,15 @@ POST /api/poll
    ]
 }
 ```
-It also returns the generated option-ids, which are supposed to be used for voting.
+It also returns the generated option-ids, which are supposed to be used for voting.<br/><br/>
 
-Once you have poll-id, you can monitor the poll change
-Get poll result
+Once you have poll-id, you can monitor the poll change.<br/>
+**Get poll result**
 ```http
 GET /api/poll/{your-poll-id}
 ```
 
-Edit poll
+**Edit poll**
 ```http
 PUT /api/poll/{your-poll-id}
 {
@@ -44,11 +47,11 @@ PUT /api/poll/{your-poll-id}
    ]
 }
 ```
-Delete poll
+**Delete poll**
 ```http
 DELETE /api/poll/{your-poll-id}
 ```
-Vote
+**Vote**
 ```http
 POST /api/option/{your-option-id}
 ```
@@ -88,17 +91,15 @@ In memory db stores data as follows:
 - Why polls and votes are in the separated atoms?
 
 By separating them, the vote(option) endpoint only requires `option-id`, but no need for `poll-id`.<br/>
-As a trade-off, this structure makes *read* performance worse, because more computations are needed to collect values.<br/>
+As a trade-off, this structure makes *read* performance worse, because more computations are needed to collect values, but it shouldn't be significant.<br/>
 
 - Why `ConcurrentLinkedQueue` instead of `atom`?
 
-`atom(#{})` (or `(atom [])`) could fit the vote count mutable object for this schema. <br/>
-I'm not sure about actual benchmarks for this, but theoretically, `ConcurrentLinkedQueue` can outperform in concurrent high-traffic situations because its algorithm aims to reduce the amount of `compareAndSet` calls.<br/>
-You can understand this experimental decision as a fun part of my submission :)</br></br>
-Additionally, by storing here `user-id`s, we can prevent users from voting for the same option multiple times for free.<br/>
-Compared to storing a count number and incrementing it, the trade-off is *read / write* performance.<br/>
-(`ConcurrentLinkedQueue.add()` should give higher throughput than `(swap! cnt inc)` with concurrent calls, but `ConcurrentLinkedQueue.size()` should not)<br/>
-In my consideration, concurrent writes for voting can be a bottleneck for the polling systems, when we have many users, more likely than reads for poll change. 
+`atom(#{})` could also be used for the vote count in this schema. <br/>
+Theoretically, `ConcurrentLinkedQueue` might outperform in concurrent high-traffic situations because its algorithm aims to reduce the amount of `compareAndSet` calls.<br/><br/>
+To support the feature *1 vote per 1 user for the same option* - storing users who voted is mandatory.<br/>
+</br>
+
 
 <br/>
 
@@ -145,50 +146,42 @@ The poll-id field can be added to the votes map for faster lookup of the target 
 ## Database schema
 
 ```sql
-/* technical columns except for id (created_at, updated_at, etc)
-   were omitted. */
+/*
+   technical columns except for id (created_at, updated_at, etc)
+   were omitted.
+*/
 
 CREATE TABLE users (
   id UUID PRIMARY KEY,
+  is_admin Boolean NOT NULL,
   api_key TEXT NOT NULL,
   name TEXT NOT NULL,
-  is_admin Boolean NOT NULL,
   UNIQUE (api_key),
   UNIQUE (name)
 )
 
-CREATE TYPE poll_type AS ENUM('single-selection', 'multiple-selection')
-
 CREATE TABLE polls (
   id UUID PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users
-  question TEXT NOT NULL,
-  type poll_type NOT NULL
-)
+  type SMALLINT NOT NULL,
+  question TEXT NOT NULL
+) 
 
 CREATE TABLE options (
   id UUID PRIMARY KEY,
   poll_id UUID NOT NULL REFERENCES polls,
-  option TEXT NOT NULL,
   rank INT NOT NULL,
+  option TEXT NOT NULL,
   UNIQUE (poll_id, option)
 )
 
-/*
 CREATE TABLE votes (
   id UUID PRIMARY KEY,
-  option_id UUID NOT NULL REFERENCES options,
   user_id UUID NOT NULL REFERENCES users,
-  UNIQUE (option_id, user_id)
-)
- */
-
-CREATE TABLE votes (
-  id UUID PRIMARY KEY,
-  unique_key UUID NOT NULL,
+  poll_id UUID NOT NULL REFERENCES polls,
   option_id UUID NOT NULL REFERENCES options,
-  user_id UUID NOT NULL REFERENCES users,
-  UNIQUE (unique_key, user_id)
+  option_id_unique_key UUID REFERENCES options, 
+  UNIQUE (user_id, poll_id, option_id_unique_key)
 )
 
 
@@ -196,17 +189,19 @@ CREATE TABLE votes (
 ```
 <br/><br/>
 
-### Consideration
+### Considerations
 These schemas allow to vote with no locks (no conditional inserts).<br/>
-The values in the unique_key field of the votes table should be either poll_id (for single-selection poll) or option_id (for multiple-selection poll).<br/>
-The unique constraint to (unique_key, user_id) prevents the violation of business rules.
+`polls.type` is 0 for single-selection polls and 1 for multiple-selection polls.<br/>
+The values in the `votes.option_id_unique_key` field should be `null` for single-selection polls and `option_id` for multiple-selection polls.<br/>
+The unique constraint to `user_id`, `poll_id`, and `option_id_unique_key` prevents the violation of business rules.
 The INSERT query will be as follows:
 ```sql
-INSERT INTO votes (unique_key, opiton_id, user_id)
+INSERT INTO votes (user_id, poll_id, opiton_id, option_id_unique_key)
 SELECT
-  CASE WHEN o.type = 'single_selection' THEN p.id ELSE o.id END
+  ? --'user_id'
+  ,? --'poll_id'
   ,? --'option_id'
-  ,? --'user_id'
+  ,CASE WHEN p.type = 1 THEN o.id END
 FROM options o
 JOIN polls p
 ON o.poll_id = p.id
@@ -227,6 +222,5 @@ ON o.id = v.option_id
 WHERE p.id = ?
 ```
 
-If options and votes tables have >1M rows, we can have btree index on options.poll_id and votes.option_id.<br/>
-If they have more data, we can partition them by uuid_v7 (accordingly shard by it). <br/>
-In case we can delete old data also, it conveniently allows us to DROP TABLE (or DATABASE)
+If options and votes tables have >1M rows, we can have btree indexes on options.poll_id and votes.option_id.<br/>
+If they have much more data, we can partition them (+ polls, too) by poll_id (and shard by it). <br/>
